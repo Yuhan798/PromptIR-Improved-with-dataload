@@ -23,7 +23,7 @@ class PromptTrainDataset(Dataset):
         self.de_type = self.args.de_type
         print(self.de_type)
 
-        self.de_dict = {'denoise_15': 0, 'denoise_25': 1, 'denoise_50': 2, 'derain': 3, 'dehaze': 4, 'deblur' : 5}
+        self.de_dict = {'deoverexp': 0, 'delow': 1, 'dehazy': 2, 'decombined': 3}
 
         self._init_ids()
         self._merge_ids()
@@ -36,140 +36,91 @@ class PromptTrainDataset(Dataset):
         self.toTensor = ToTensor()
 
     def _init_ids(self):
-        if 'denoise_15' in self.de_type or 'denoise_25' in self.de_type or 'denoise_50' in self.de_type:
-            self._init_clean_ids()
-        if 'derain' in self.de_type:
-            self._init_rs_ids()
-        if 'dehaze' in self.de_type:
-            self._init_hazy_ids()
+        if 'deoverexp' in self.de_type:
+            self._init_deoverexp_ids()
+        if 'delow' in self.de_type:
+            self._init_delow_ids()
+        if 'dehazy' in self.de_type:
+            self._init_dehazy_ids()
+        if 'decombined' in self.de_type:
+            self._init_decombined_ids()
 
         random.shuffle(self.de_type)
-
-    def _init_clean_ids(self):
-        ref_file = self.args.data_file_dir + "noisy/denoise_airnet.txt"
-        temp_ids = []
-        temp_ids+= [id_.strip() for id_ in open(ref_file)]
-        clean_ids = []
-        name_list = os.listdir(self.args.denoise_dir)
-        clean_ids += [self.args.denoise_dir + id_ for id_ in name_list if id_.strip() in temp_ids]
-
-        if 'denoise_15' in self.de_type:
-            self.s15_ids = [{"clean_id": x,"de_type":0} for x in clean_ids]
-            self.s15_ids = self.s15_ids * 3
-            random.shuffle(self.s15_ids)
-            self.s15_counter = 0
-        if 'denoise_25' in self.de_type:
-            self.s25_ids = [{"clean_id": x,"de_type":1} for x in clean_ids]
-            self.s25_ids = self.s25_ids * 3
-            random.shuffle(self.s25_ids)
-            self.s25_counter = 0
-        if 'denoise_50' in self.de_type:
-            self.s50_ids = [{"clean_id": x,"de_type":2} for x in clean_ids]
-            self.s50_ids = self.s50_ids * 3
-            random.shuffle(self.s50_ids)
-            self.s50_counter = 0
-
-        self.num_clean = len(clean_ids)
-        print("Total Denoise Ids : {}".format(self.num_clean))
-
-    def _init_hazy_ids(self):
-        temp_ids = []
-        hazy = self.args.data_file_dir + "hazy/hazy_outside.txt"
-        temp_ids+= [self.args.dehaze_dir + id_.strip() for id_ in open(hazy)]
-        self.hazy_ids = [{"clean_id" : x,"de_type":4} for x in temp_ids]
-
-        self.hazy_counter = 0
-        
-        self.num_hazy = len(self.hazy_ids)
-        print("Total Hazy Ids : {}".format(self.num_hazy))
-
-    def _init_rs_ids(self):
-        temp_ids = []
-        rs = self.args.data_file_dir + "rainy/rainTrain.txt"
-        temp_ids+= [self.args.derain_dir + id_.strip() for id_ in open(rs)]
-        self.rs_ids = [{"clean_id":x,"de_type":3} for x in temp_ids]
-        self.rs_ids = self.rs_ids * 120
-
-        self.rl_counter = 0
-        self.num_rl = len(self.rs_ids)
-        print("Total Rainy Ids : {}".format(self.num_rl))
     
+    def _init_deoverexp_ids(self):
+        # 从指定的输入文件夹中读取所有文件，并构造对应的 ground truth 路径
+        file_list = sorted(os.listdir(self.args.deoverexp_input_dir))
+        self.deoverexp_ids = [{
+            "input": os.path.join(self.args.deoverexp_input_dir, fname),
+            "gt": os.path.join(self.args.deoverexp_gt_dir, fname),
+            "de_type": self.de_dict['deoverexp']
+        } for fname in file_list]
+        print("Total deoverexp Ids: {}".format(len(self.deoverexp_ids)))
 
+    def _init_delow_ids(self):
+        file_list = sorted(os.listdir(self.args.delow_input_dir))
+        self.delow_ids = [{
+            "input": os.path.join(self.args.delow_input_dir, fname),
+            "gt": os.path.join(self.args.delow_gt_dir, fname),
+            "de_type": self.de_dict['delow']
+        } for fname in file_list]
+        print("Total delow Ids: {}".format(len(self.delow_ids)))
+
+    def _init_dehazy_ids(self):
+        file_list = sorted(os.listdir(self.args.dehazy_input_dir))
+        self.dehazy_ids = [{
+            "input": os.path.join(self.args.dehazy_input_dir, fname),
+            "gt": os.path.join(self.args.dehazy_gt_dir, fname),
+            "de_type": self.de_dict['dehazy']
+        } for fname in file_list]
+        print("Total dehazy Ids: {}".format(len(self.dehazy_ids)))
+        
+    def _init_decombined_ids(self):
+        file_list = sorted(os.listdir(self.args.decombined_input_dir))
+        self.decombined_ids = [{
+            "input": os.path.join(self.args.decombined_input_dir, fname),
+            "gt": os.path.join(self.args.decombined_gt_dir, fname),
+            "de_type": self.de_dict['decombined']
+        } for fname in file_list]
+        print("Total decombined Ids: {}".format(len(self.decombined_ids)))
+    
     def _crop_patch(self, img_1, img_2):
-        H = img_1.shape[0]
-        W = img_1.shape[1]
+        H, W = img_1.shape[0], img_1.shape[1]
         ind_H = random.randint(0, H - self.args.patch_size)
         ind_W = random.randint(0, W - self.args.patch_size)
-
+        
         patch_1 = img_1[ind_H:ind_H + self.args.patch_size, ind_W:ind_W + self.args.patch_size]
         patch_2 = img_2[ind_H:ind_H + self.args.patch_size, ind_W:ind_W + self.args.patch_size]
 
         return patch_1, patch_2
-
-    def _get_gt_name(self, rainy_name):
-        gt_name = rainy_name.split("rainy")[0] + 'gt/norain-' + rainy_name.split('rain-')[-1]
-        return gt_name
-
-    def _get_nonhazy_name(self, hazy_name):
-        dir_name = hazy_name.split("synthetic")[0] + 'original/'
-        name = hazy_name.split('/')[-1].split('_')[0]
-        suffix = '.' + hazy_name.split('.')[-1]
-        nonhazy_name = dir_name + name + suffix
-        return nonhazy_name
-
+    
     def _merge_ids(self):
         self.sample_ids = []
-        if "denoise_15" in self.de_type:
-            self.sample_ids += self.s15_ids
-            self.sample_ids += self.s25_ids
-            self.sample_ids += self.s50_ids
-        if "derain" in self.de_type:
-            self.sample_ids+= self.rs_ids
-        
-        if "dehaze" in self.de_type:
-            self.sample_ids+= self.hazy_ids
-        print(len(self.sample_ids))
+        if 'deoverexp' in self.de_type:
+            self.sample_ids += self.deoverexp_ids
+        if 'delow' in self.de_type:
+            self.sample_ids += self.delow_ids
+        if 'dehazy' in self.de_type:
+            self.sample_ids += self.dehazy_ids
+        if 'decombined' in self.de_type:
+            self.sample_ids += self.decombined_ids
+        print("Total sample ids: {}".format(len(self.sample_ids)))
 
     def __getitem__(self, idx):
         sample = self.sample_ids[idx]
-        de_id = sample["de_type"]
-
-        if de_id < 3:
-            if de_id == 0:
-                clean_id = sample["clean_id"]
-            elif de_id == 1:
-                clean_id = sample["clean_id"]
-            elif de_id == 2:
-                clean_id = sample["clean_id"]
-
-            clean_img = crop_img(np.array(Image.open(clean_id).convert('RGB')), base=16)
-            clean_patch = self.crop_transform(clean_img)
-            clean_patch= np.array(clean_patch)
-
-            clean_name = clean_id.split("/")[-1].split('.')[0]
-
-            clean_patch = random_augmentation(clean_patch)[0]
-
-            degrad_patch = self.D.single_degrade(clean_patch, de_id)
+        # 对于新任务，sample 中应包含 "input" 和 "gt" 两个键
+        if "input" in sample and "gt" in sample:
+            degraded_img = crop_img(np.array(Image.open(sample["input"]).convert('RGB')), base=16)
+            clean_img = crop_img(np.array(Image.open(sample["gt"]).convert('RGB')), base=16)
+            # 采用同步随机裁剪和数据增强
+            degraded_patch, clean_patch = random_augmentation(*self._crop_patch(degraded_img, clean_img))
+            name = os.path.basename(sample["input"]).split('.')[0]
         else:
-            if de_id == 3:
-                # Rain Streak Removal
-                degrad_img = crop_img(np.array(Image.open(sample["clean_id"]).convert('RGB')), base=16)
-                clean_name = self._get_gt_name(sample["clean_id"])
-                clean_img = crop_img(np.array(Image.open(clean_name).convert('RGB')), base=16)
-            elif de_id == 4:
-                # Dehazing with SOTS outdoor training set
-                degrad_img = crop_img(np.array(Image.open(sample["clean_id"]).convert('RGB')), base=16)
-                clean_name = self._get_nonhazy_name(sample["clean_id"])
-                clean_img = crop_img(np.array(Image.open(clean_name).convert('RGB')), base=16)
-
-            degrad_patch, clean_patch = random_augmentation(*self._crop_patch(degrad_img, clean_img))
+            raise ValueError("样本格式错误，未找到 'input' 和 'gt' 字段。")
 
         clean_patch = self.toTensor(clean_patch)
-        degrad_patch = self.toTensor(degrad_patch)
-
-
-        return [clean_name, de_id], degrad_patch, clean_patch
+        degrad_patch = self.toTensor(degraded_patch)
+        return [name, sample["de_type"]], degrad_patch, clean_patch
 
     def __len__(self):
         return len(self.sample_ids)
@@ -237,48 +188,56 @@ class DenoiseTestDataset(Dataset):
         return self.num_clean
 
 
-class DerainDehazeDataset(Dataset):
-    def __init__(self, args, task="derain",addnoise = False,sigma = None):
-        super(DerainDehazeDataset, self).__init__()
-        self.ids = []
-        self.task_idx = 0
+class DeDataset(Dataset):
+    def __init__(self, args, task=None, addnoise = False, sigma = None):
+        super(DeDataset, self).__init__()
+        # self.ids = []
         self.args = args
-
-        self.task_dict = {'derain': 0, 'dehaze': 1}
+        self.task_dict = {'deoverexp': 0, 'delow': 1, 'dehazy': 2, 'decombined': 3}
         self.toTensor = ToTensor()
         self.addnoise = addnoise
         self.sigma = sigma
-
+        
+        self.task_idx = self.task_dict[task]
         self.set_dataset(task)
+        
     def _add_gaussian_noise(self, clean_patch):
         noise = np.random.randn(*clean_patch.shape)
         noisy_patch = np.clip(clean_patch + noise * self.sigma, 0, 255).astype(np.uint8)
         return noisy_patch, clean_patch
 
     def _init_input_ids(self):
-        if self.task_idx == 0:
-            self.ids = []
-            name_list = os.listdir(self.args.derain_path + 'input/')
-            # print(name_list)
-            print(self.args.derain_path)
-            self.ids += [self.args.derain_path + 'input/' + id_ for id_ in name_list]
-        elif self.task_idx == 1:
-            self.ids = []
-            name_list = os.listdir(self.args.dehaze_path + 'input/')
-            self.ids += [self.args.dehaze_path + 'input/' + id_ for id_ in name_list]
+        if self.task_idx == 0:  # deoverexp
+            input_dir = self.args.deoverexp_Test_input_dir
+        elif self.task_idx == 1:  # delow
+            input_dir = self.args.delow_Test_input_dir
+        elif self.task_idx == 2:  # dehazy
+            input_dir = self.args.dehazy_Test_input_dir
+        elif self.task_idx == 3:  # decombined
+            input_dir = self.args.decombined_Test_input_dir
 
+        if not os.path.exists(input_dir):
+            raise FileNotFoundError(f"Input directory {input_dir} does not exist.")
+        
+        self.ids = []
+        name_list = sorted(os.listdir(input_dir))
+        self.ids = [os.path.join(input_dir, fname) for fname in name_list]
         self.length = len(self.ids)
 
     def _get_gt_path(self, degraded_name):
-        if self.task_idx == 0:
-            gt_name = degraded_name.replace("input", "target")
-        elif self.task_idx == 1:
-            dir_name = degraded_name.split("input")[0] + 'target/'
-            name = degraded_name.split('/')[-1].split('_')[0] + '.png'
-            gt_name = dir_name + name
+        if self.task_idx == 0:  # deoverexp
+            gt_name = os.path.join(self.args.deoverexp_Test_gt_dir, os.path.basename(degraded_name))
+        elif self.task_idx == 1:  # delow
+            gt_name = os.path.join(self.args.delow_Test_gt_dir, os.path.basename(degraded_name))
+        elif self.task_idx == 2:  # dehazy
+            gt_name = os.path.join(self.args.dehazy_Test_gt_dir, os.path.basename(degraded_name))
+        elif self.task_idx == 3:  # decombined
+            gt_name = os.path.join(self.args.decombined_Test_gt_dir, os.path.basename(degraded_name))
         return gt_name
 
     def set_dataset(self, task):
+        if task not in self.task_dict:
+            raise ValueError(f"Unsupported task: {task}. Available tasks: {list(self.task_dict.keys())}")
         self.task_idx = self.task_dict[task]
         self._init_input_ids()
 
@@ -287,12 +246,13 @@ class DerainDehazeDataset(Dataset):
         clean_path = self._get_gt_path(degraded_path)
 
         degraded_img = crop_img(np.array(Image.open(degraded_path).convert('RGB')), base=16)
-        if self.addnoise:
-            degraded_img,_ = self._add_gaussian_noise(degraded_img)
+        if self.addnoise and self.sigma is not None:
+            degraded_img, _ = self._add_gaussian_noise(degraded_img)
         clean_img = crop_img(np.array(Image.open(clean_path).convert('RGB')), base=16)
 
-        clean_img, degraded_img = self.toTensor(clean_img), self.toTensor(degraded_img)
-        degraded_name = degraded_path.split('/')[-1][:-4]
+        clean_img = self.toTensor(clean_img)
+        degraded_img = self.toTensor(degraded_img)
+        degraded_name = os.path.splitext(os.path.basename(degraded_path))[0]
 
         return [degraded_name], degraded_img, clean_img
 
@@ -340,4 +300,4 @@ class TestSpecificDataset(Dataset):
     def __len__(self):
         return self.num_img
     
-
+    
