@@ -12,9 +12,9 @@ from utils.schedulers import LinearWarmupCosineAnnealingLR
 import numpy as np
 import wandb
 from options import options as opt
-import lightning.pytorch as pl
-from lightning.pytorch.loggers import WandbLogger,TensorBoardLogger
-from lightning.pytorch.callbacks import ModelCheckpoint
+import pytorch_lightning as pl 
+from pytorch_lightning.loggers import WandbLogger,TensorBoardLogger 
+from pytorch_lightning.callbacks import ModelCheckpoint 
 
 
 class PromptIRModel(pl.LightningModule):
@@ -62,12 +62,19 @@ def main():
 
     trainset = PromptTrainDataset(opt)
     checkpoint_callback = ModelCheckpoint(dirpath = opt.ckpt_dir,every_n_epochs = 1,save_top_k=-1)
-    trainloader = DataLoader(trainset, batch_size=opt.batch_size, pin_memory=True, shuffle=True,
+    trainloader = DataLoader(trainset, batch_size=opt.batch_size, pin_memory=False, shuffle=True,
                              drop_last=True, num_workers=opt.num_workers)
     
     model = PromptIRModel()
     
-    trainer = pl.Trainer( max_epochs=opt.epochs,accelerator="gpu",devices=opt.num_gpus,strategy="ddp_find_unused_parameters_true",logger=logger,callbacks=[checkpoint_callback])
+    trainer = pl.Trainer(
+        max_epochs=opt.epochs,
+        accelerator="gpu",
+        devices=[0, 1],
+        strategy="ddp_find_unused_parameters_true",
+        logger=logger,
+        callbacks=[checkpoint_callback])
+    
     trainer.fit(model=model, train_dataloaders=trainloader)
 
 

@@ -8,12 +8,13 @@ from torch.utils.data import DataLoader
 import os
 import torch.nn as nn 
 
-from utils.dataset_utils import DenoiseTestDataset, DerainDehazeDataset
+from utils.dataset_utils import DenoiseTestDataset, DeDataset
 from utils.val_utils import AverageMeter, compute_psnr_ssim
 from utils.image_io import save_image_tensor
 from net.model import PromptIR
 
-import lightning.pytorch as pl
+import pytorch_lightning as pl
+from utils.schedulers import LinearWarmupCosineAnnealingLR
 import torch.nn.functional as F
 
 class PromptIRModel(pl.LightningModule):
@@ -41,41 +42,41 @@ class PromptIRModel(pl.LightningModule):
         lr = scheduler.get_lr()
     
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=2e-4)
-        scheduler = LinearWarmupCosineAnnealingLR(optimizer=optimizer,warmup_epochs=15,max_epochs=150)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=2e-4)
+        scheduler = LinearWarmupCosineAnnealingLR(optimizer=optimizer,warmup_epochs=15,max_epochs=100)
 
         return [optimizer],[scheduler]
 
 
 
-def test_Denoise(net, dataset, sigma=15):
-    output_path = testopt.output_path + 'denoise/' + str(sigma) + '/'
-    subprocess.check_output(['mkdir', '-p', output_path])
+# def test_Denoise(net, dataset, sigma=15):
+#     output_path = testopt.output_path + 'denoise/' + str(sigma) + '/'
+#     subprocess.check_output(['mkdir', '-p', output_path])
     
 
-    dataset.set_sigma(sigma)
-    testloader = DataLoader(dataset, batch_size=1, pin_memory=True, shuffle=False, num_workers=0)
+#     dataset.set_sigma(sigma)
+#     testloader = DataLoader(dataset, batch_size=1, pin_memory=True, shuffle=False, num_workers=0)
 
-    psnr = AverageMeter()
-    ssim = AverageMeter()
+#     psnr = AverageMeter()
+#     ssim = AverageMeter()
 
-    with torch.no_grad():
-        for ([clean_name], degrad_patch, clean_patch) in tqdm(testloader):
-            degrad_patch, clean_patch = degrad_patch.cuda(), clean_patch.cuda()
+#     with torch.no_grad():
+#         for ([clean_name], degrad_patch, clean_patch) in tqdm(testloader):
+#             degrad_patch, clean_patch = degrad_patch.cuda(), clean_patch.cuda()
 
-            restored = net(degrad_patch)
-            temp_psnr, temp_ssim, N = compute_psnr_ssim(restored, clean_patch)
+#             restored = net(degrad_patch)
+#             temp_psnr, temp_ssim, N = compute_psnr_ssim(restored, clean_patch)
 
-            psnr.update(temp_psnr, N)
-            ssim.update(temp_ssim, N)
-            save_image_tensor(restored, output_path + clean_name[0] + '.png')
+#             psnr.update(temp_psnr, N)
+#             ssim.update(temp_ssim, N)
+#             save_image_tensor(restored, output_path + clean_name[0] + '.png')
 
-        print("Denoise sigma=%d: psnr: %.2f, ssim: %.4f" % (sigma, psnr.avg, ssim.avg))
+#         print("Denoise sigma=%d: psnr: %.2f, ssim: %.4f" % (sigma, psnr.avg, ssim.avg))
 
 
 
-def test_Derain_Dehaze(net, dataset, task="derain"):
-    output_path = testopt.output_path + task + '/'
+def test_DeTask(net, dataset, task):
+    output_path = os.path.join(testopt.output_path, task)
     subprocess.check_output(['mkdir', '-p', output_path])
 
     dataset.set_dataset(task)
@@ -87,14 +88,13 @@ def test_Derain_Dehaze(net, dataset, task="derain"):
     with torch.no_grad():
         for ([degraded_name], degrad_patch, clean_patch) in tqdm(testloader):
             degrad_patch, clean_patch = degrad_patch.cuda(), clean_patch.cuda()
-
+            
             restored = net(degrad_patch)
             temp_psnr, temp_ssim, N = compute_psnr_ssim(restored, clean_patch)
             psnr.update(temp_psnr, N)
             ssim.update(temp_ssim, N)
-
-            save_image_tensor(restored, output_path + degraded_name[0] + '.png')
-        print("PSNR: %.2f, SSIM: %.4f" % (psnr.avg, ssim.avg))
+            save_image_tensor(restored, os.path.join(output_path, f'{degraded_name[0]}.png'))
+        print(f"{task} PSNR: {psnr.avg:.2f}, SSIM: {ssim.avg:.4f}")
 
 
 if __name__ == '__main__':
@@ -104,11 +104,27 @@ if __name__ == '__main__':
     parser.add_argument('--mode', type=int, default=0,
                         help='0 for denoise, 1 for derain, 2 for dehaze, 3 for all-in-one')
 
-    parser.add_argument('--denoise_path', type=str, default="test/denoise/", help='save path of test noisy images')
-    parser.add_argument('--derain_path', type=str, default="test/derain/", help='save path of test raining images')
-    parser.add_argument('--dehaze_path', type=str, default="test/dehaze/", help='save path of test hazy images')
-    parser.add_argument('--output_path', type=str, default="output/", help='output save path')
-    parser.add_argument('--ckpt_name', type=str, default="model.ckpt", help='checkpoint save path')
+    parser.add_argument('--output_path', type=str, default="output/", 
+                        help='output save path')
+    parser.add_argument('--ckpt_name', type=str, default="Combined_Endovis17.ckpt", 
+                        help='checkpoint save path')
+    
+    parser.add_argument('--deoverexp_Test_input_dir', type=str, default='data_18/Test/deoverexp/overexp', 
+                        help='Path to deoverexp input images')
+    parser.add_argument('--deoverexp_Test_gt_dir', type=str, default='data_18/Test/deoverexp/gt', 
+                        help='Path to deoverexp ground truth images')
+    parser.add_argument('--delow_Test_input_dir', default='data_18/Test/delow/low', 
+                        help='Path to delow input images')
+    parser.add_argument('--delow_Test_gt_dir', default='data_18/Test/delow/gt',
+                        help='Path to delow ground truth images')
+    parser.add_argument('--dehazy_Test_input_dir', type=str, default='data_18/Test/dehazy/hazy', 
+                        help='Path to dehazy input images')
+    parser.add_argument('--dehazy_Test_gt_dir', type=str, default='data_18/Test/dehazy/gt', 
+                        help='Path to dehazy ground truth images')
+    parser.add_argument('--decombined_Test_input_dir', type=str, default='data_combined_17/Test/combined',
+                    help='Path to decombined input images')
+    parser.add_argument('--decombined_Test_gt_dir', type=str, default='data_combined_17/Test/gt',
+                    help='Path to decombined ground truth images')
     testopt = parser.parse_args()
     
     
@@ -116,77 +132,35 @@ if __name__ == '__main__':
     np.random.seed(0)
     torch.manual_seed(0)
     torch.cuda.set_device(testopt.cuda)
-
-
-    ckpt_path = "ckpt/" + testopt.ckpt_name
-
-
     
-    denoise_splits = ["bsd68/"]
-    derain_splits = ["Rain100L/"]
-
-    denoise_tests = []
-    derain_tests = []
-
-    base_path = testopt.denoise_path
-    for i in denoise_splits:
-        testopt.denoise_path = os.path.join(base_path,i)
-        denoise_testset = DenoiseTestDataset(testopt)
-        denoise_tests.append(denoise_testset)
-
-
+    ckpt_path = os.path.join("ckpt", testopt.ckpt_name)
+    
     print("CKPT name : {}".format(ckpt_path))
-
-    net  = PromptIRModel().load_from_checkpoint(ckpt_path).cuda()
+    print("start testing...")
+    
+    net = PromptIRModel.load_from_checkpoint(ckpt_path).cuda()
     net.eval()
 
+
     
+    # 根据模式执行测试
     if testopt.mode == 0:
-        for testset,name in zip(denoise_tests,denoise_splits) :
-            print('Start {} testing Sigma=15...'.format(name))
-            test_Denoise(net, testset, sigma=15)
-
-            print('Start {} testing Sigma=25...'.format(name))
-            test_Denoise(net, testset, sigma=25)
-
-            print('Start {} testing Sigma=50...'.format(name))
-            test_Denoise(net, testset, sigma=50)
+        delow_set = DeDataset(testopt, task="delow")
+        test_DeTask(net, delow_set, "delow")
     elif testopt.mode == 1:
-        print('Start testing rain streak removal...')
-        derain_base_path = testopt.derain_path
-        for name in derain_splits:
-            print('Start testing {} rain streak removal...'.format(name))
-            testopt.derain_path = os.path.join(derain_base_path,name)
-            derain_set = DerainDehazeDataset(opt,addnoise=False,sigma=15)
-            test_Derain_Dehaze(net, derain_set, task="derain")
+        deoverexp_set = DeDataset(testopt, task="deoverexp")
+        test_DeTask(net, deoverexp_set, "deoverexp")
     elif testopt.mode == 2:
-        print('Start testing SOTS...')
-        derain_base_path = testopt.derain_path
-        name = derain_splits[0]
-        testopt.derain_path = os.path.join(derain_base_path,name)
-        derain_set = DerainDehazeDataset(testopt,addnoise=False,sigma=15)
-        test_Derain_Dehaze(net, derain_set, task="SOTS_outdoor")
+        dehazy_set = DeDataset(testopt, task="dehazy")
+        test_DeTask(net, dehazy_set, "dehazy")
     elif testopt.mode == 3:
-        for testset,name in zip(denoise_tests,denoise_splits) :
-            print('Start {} testing Sigma=15...'.format(name))
-            test_Denoise(net, testset, sigma=15)
-
-            print('Start {} testing Sigma=25...'.format(name))
-            test_Denoise(net, testset, sigma=25)
-
-            print('Start {} testing Sigma=50...'.format(name))
-            test_Denoise(net, testset, sigma=50)
-
-
-
-        derain_base_path = testopt.derain_path
-        print(derain_splits)
-        for name in derain_splits:
-
-            print('Start testing {} rain streak removal...'.format(name))
-            testopt.derain_path = os.path.join(derain_base_path,name)
-            derain_set = DerainDehazeDataset(testopt,addnoise=False,sigma=15)
-            test_Derain_Dehaze(net, derain_set, task="derain")
-
-        print('Start testing SOTS...')
-        test_Derain_Dehaze(net, derain_set, task="dehaze")
+        decombined_set = DeDataset(testopt, task="decombined")
+        test_DeTask(net, decombined_set, "decombined")
+    elif testopt.mode == 4:
+        # 全任务测试
+        delow_set = DeDataset(testopt, task="delow")
+        test_DeTask(net, delow_set, "delow")
+        deoverexp_set = DeDataset(testopt, task="deoverexp")
+        test_DeTask(net, deoverexp_set, "deoverexp")
+        dehazy_set = DeDataset(testopt, task="dehazy")
+        test_DeTask(net, dehazy_set, "dehazy")
